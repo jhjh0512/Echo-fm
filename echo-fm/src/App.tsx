@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { speak } from './utils/tts';
 import Player from './components/Player';
+import HistoryExplorer from './HistoryExplorer';
 
-const HISTORY_KEY = "echo_history";
+const HISTORY_KEY = 'echo_history';
 
 function App() {
   const [era, setEra] = useState('1990s');
@@ -16,6 +17,7 @@ function App() {
   const [language, setLanguage] = useState('en-US');
   const [voice, setVoice] = useState('alloy');
   const [loading, setLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   /* --------------------------------------------------
    *  히스토리 저장
@@ -23,23 +25,21 @@ function App() {
   const saveToHistory = (playlist: any[]) => {
     const existing: any[] = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
 
-    // 1) 방송 결과에서 필요한 메타데이터를 추려서 저장
     const summarized = playlist.map((t: any) => ({
       title: t.title,
       artist: t.artist,
-      genre,   // 현재 입력값
-      era,     // 현재 입력값
-      region,  // 현재 입력값
+      genre,
+      era,
+      region,
       youtube_id: t.youtube_id,
       narration: t.narration
     }));
 
-    // 2) 병합 + 중복 제거 (title+artist+era+genre+region로 고유값 생성)
     const merged = [...existing, ...summarized];
     const unique = Array.from(
       new Map(
         merged.map(trk => [
-          `${trk.title}::${trk.artist}::${trk.era}::${trk.genre}::${trk.region}`,
+          `${trk.title.toLowerCase()}::${trk.artist.toLowerCase()}::${trk.era}::${trk.genre}::${trk.region}`,
           trk
         ])
       ).values()
@@ -49,66 +49,54 @@ function App() {
   };
 
   /* --------------------------------------------------
-   *  히스토리 내보내기
+   *  히스토리 내보내기 / 가져오기
    * -------------------------------------------------- */
   const exportHistory = () => {
     const history = localStorage.getItem(HISTORY_KEY);
     if (!history) return;
-
     const blob = new Blob([history], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement('a');
     a.href = url;
     a.download = 'echo_fm_history.json';
     a.click();
   };
 
-  /* --------------------------------------------------
-   *  히스토리 가져오기 (기존과 병합)
-   * -------------------------------------------------- */
   const importHistory = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     try {
       const text = await file.text();
       const imported = JSON.parse(text);
       if (!Array.isArray(imported)) throw new Error('Invalid format');
-
       const existing: any[] = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
-      localStorage.setItem(`${HISTORY_KEY}_backup`, JSON.stringify(existing));
-
-      // dedup 방식은 saveToHistory와 동일하게 유지
       const merged = [...existing, ...imported];
       const unique = Array.from(
         new Map(
           merged.map(trk => [
-            `${trk.title}::${trk.artist}::${trk.era}::${trk.genre}::${trk.region}`,
+            `${trk.title.toLowerCase()}::${trk.artist.toLowerCase()}::${trk.era}::${trk.genre}::${trk.region}`,
             trk
           ])
         ).values()
       );
-
       localStorage.setItem(HISTORY_KEY, JSON.stringify(unique));
-      alert('✅ History successfully imported and merged!');
+      alert('✅ History imported & merged');
     } catch {
-      alert('❌ Failed to import history. Please check the file format.');
+      alert('❌ Failed to import');
     }
   };
 
   const clearHistory = () => {
-    if (window.confirm('정말로 히스토리를 삭제하시겠습니까?')) {
+    if (window.confirm('히스토리를 정말 삭제할까요?')) {
       localStorage.removeItem(HISTORY_KEY);
-      alert('🗑️ 히스토리가 삭제되었습니다.');
+      alert('🗑️ 히스토리 삭제 완료');
     }
   };
 
-  const getSummarizedHistory = () => {
+  const getHistory = () => {
     try {
       const raw = localStorage.getItem(HISTORY_KEY);
-      if (!raw) return [];
-      return JSON.parse(raw);
+      return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
     }
@@ -121,7 +109,7 @@ function App() {
     if (loading) return;
     setLoading(true);
 
-    const history = getSummarizedHistory();
+    const history = getHistory();
     console.log('📝 사용자 입력값:', {
       era,
       genre,
@@ -172,76 +160,68 @@ function App() {
    *  UI
    * -------------------------------------------------- */
   return (
-    <div style={{ padding: 32, fontFamily: 'sans-serif' }}>
-      <h1>Echo FM 🎙️</h1>
+    <div className="p-8 space-y-8 font-sans text-gray-100 bg-gray-900 min-h-screen">
+      <h1 className="text-3xl font-bold">Echo FM 🎙️</h1>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-        <input value={era} onChange={e => setEra(e.target.value)} placeholder="Era (e.g. 1990s)" />
-        <input value={genre} onChange={e => setGenre(e.target.value)} placeholder="Genre (e.g. indie rock)" />
-        <input value={region} onChange={e => setRegion(e.target.value)} placeholder="Region (e.g. US)" />
-        <input value={artist} onChange={e => setArtist(e.target.value)} placeholder="Artist (e.g. Pavement)" />
-        <select value={language} onChange={e => setLanguage(e.target.value)}>
-          <option value="en-US">English (US)</option>
-          <option value="ko-KR">Korean</option>
-          <option value="ja-JP">Japanese</option>
-        </select>
-        <div style={{ marginTop: 24 }}>
-          <label>🎚️ 해설 비율 (talk_ratio): {talkRatio.toFixed(1)}</label>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.1}
-            value={talkRatio}
-            onChange={e => setTalkRatio(Number(e.target.value))}
-          />
+      {/* Control Panel */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="flex flex-col space-y-2">
+          <input value={era} onChange={e => setEra(e.target.value)} placeholder="Era (e.g. 1990s)" className="px-3 py-2 rounded-lg bg-gray-800" />
+          <input value={genre} onChange={e => setGenre(e.target.value)} placeholder="Genre (e.g. indie rock)" className="px-3 py-2 rounded-lg bg-gray-800" />
+          <input value={region} onChange={e => setRegion(e.target.value)} placeholder="Region (e.g. US)" className="px-3 py-2 rounded-lg bg-gray-800" />
+          <input value={artist} onChange={e => setArtist(e.target.value)} placeholder="Artist (optional)" className="px-3 py-2 rounded-lg bg-gray-800" />
+          <select value={language} onChange={e => setLanguage(e.target.value)} className="px-3 py-2 rounded-lg bg-gray-800">
+            <option value="en-US">English (US)</option>
+            <option value="ko-KR">Korean</option>
+            <option value="ja-JP">Japanese</option>
+          </select>
+          <label className="mt-4">🎚️ Talk Ratio: {talkRatio.toFixed(1)}</label>
+          <input type="range" min={0} max={1} step={0.1} value={talkRatio} onChange={e => setTalkRatio(Number(e.target.value))} />
+          <select value={voice} onChange={e => setVoice(e.target.value)} className="px-3 py-2 rounded-lg bg-gray-800">
+            {['alloy', 'shimmer', 'echo', 'fable', 'nova', 'onyx'].map(v => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+          <select value={trackCount} onChange={e => setTrackCount(Number(e.target.value))} className="px-3 py-2 rounded-lg bg-gray-800">
+            {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
+              <option key={n} value={n}>{n} tracks</option>
+            ))}
+          </select>
+          <button onClick={handleGenerate} disabled={loading} className="mt-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50">
+            {loading ? 'Loading…' : 'Generate'}
+          </button>
         </div>
-        <select value={voice} onChange={e => setVoice(e.target.value)}>
-          {['alloy', 'shimmer', 'echo', 'fable', 'nova', 'onyx'].map(v => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
 
-        Track count
-        <select value={trackCount} onChange={e => setTrackCount(Number(e.target.value))}>
-          {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
-            <option key={n} value={n}>{n} tracks</option>
-          ))}
-        </select>
-
-        <button onClick={handleGenerate} disabled={loading}>
-          {loading ? 'Loading…' : 'Generate'}
-        </button>
-        <button onClick={exportHistory}>Export History</button>
-        <input type="file" accept="application/json" onChange={importHistory} />
-        <button onClick={clearHistory}>🗑️ Clear History</button>
+        {/* History & File Controls */}
+        <div className="flex flex-col space-y-2">
+          <button onClick={() => setShowHistory(p => !p)} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">
+            {showHistory ? 'Hide History' : 'Show History'}
+          </button>
+          <button onClick={exportHistory} className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600">Export History</button>
+          <label className="flex flex-col">
+            <span className="text-sm mb-1">Import History JSON</span>
+            <input type="file" accept="application/json" onChange={importHistory} className="file:px-4 file:py-2 file:bg-gray-700 file:rounded-lg" />
+          </label>
+          <button onClick={clearHistory} className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500">🗑️ Clear History</button>
+        </div>
       </div>
 
+      {showHistory && <HistoryExplorer />}
+
+      {/* Player & Response */}
       {response && (
         <>
           <Player tracks={response.tracks} voice={voice} introDone={introDone} />
-          <div>
-            <h2>{response.artist_intro?.name}</h2>
-            <p>{response.artist_intro?.bio}</p>
+          <div className="mt-8 space-y-4">
+            <h2 className="text-xl font-semibold">{response.artist_intro?.name}</h2>
+            <p className="text-gray-300">{response.artist_intro?.bio}</p>
             {response.artist_intro?.narration && (
-              <blockquote
-                style={{
-                  margin: '12px 0',
-                  padding: '12px',
-                  borderLeft: '4px solid #555',
-                  background: '#1f2937',
-                  color: '#f1f5f9',
-                  fontStyle: 'italic'
-                }}
-              >
-                🗣️ {response.artist_intro.narration}
-              </blockquote>
+              <blockquote className="p-4 bg-gray-800 rounded-2xl border-l-4 border-blue-500 italic text-gray-300">🗣️ {response.artist_intro.narration}</blockquote>
             )}
-            <ul>
+            <ul className="space-y-4">
               {response.tracks?.map((t: any, i: number) => (
-                <li key={i} style={{ marginBottom: 16 }}>
-                  <strong>🎵 {t.title} by {t.artist}</strong>
-                  <br />
+                <li key={i} className="p-4 rounded-2xl bg-gray-800 shadow-md">
+                  <strong>🎵 {t.title} by {t.artist}</strong><br />
                   🗣️ {t.narration}
                 </li>
               ))}

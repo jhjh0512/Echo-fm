@@ -1,5 +1,5 @@
 require('dotenv').config();
-console.log('ENV-KEY:', process.env.YOUTUBE_API_KEY?.slice(0, 10) || 'undefined');
+console.log('ENV-KEY:', (process.env.YOUTUBE_API_KEY || '').slice(0, 10) || 'undefined');
 const express = require('express');
 const cors = require('cors');
 const { OpenAI } = require('openai');
@@ -18,67 +18,62 @@ app.use(cors());
 app.use(express.json());
 app.use('/api/tts', ttsRouter);
 
+/* --------------------------------------------------
+ *  /generate – main broadcast endpoint
+ * -------------------------------------------------- */
 app.post('/generate', async (req, res) => {
-    const { era, genre, region, user_artist, talk_ratio = 0.5, language = 'en-US', track_count = 5, history = [] } = req.body;
-    console.log("📝 사용자 요청 데이터:", req.body);
+    const {
+        era,
+        genre,
+        region,
+        user_artist = '',
+        talk_ratio = 0.5,
+        language = 'en-US',
+        track_count = 5,
+        history = []
+    } = req.body;
+    console.log('📝 사용자 요청 데이터:', req.body);
 
-    // ---------- history filtering (era+genre+region+artist) ----------
-    const relevantHistory = history.filter(track =>
-        (track.genre?.toLowerCase().includes(genre.toLowerCase()) ||
-            genre.toLowerCase().includes(track.genre?.toLowerCase() || '')) &&
-        (track.era === era) &&
-        (track.region?.toLowerCase() === region.toLowerCase()) &&
-        (!user_artist || track.artist === user_artist)
-    );
+    const userArtistNorm = user_artist.trim().toLowerCase();
 
-    const historyPrompt = relevantHistory.length > 0
-        ? `Avoid repeating these tracks already used in previous broadcasts:\n${relevantHistory.map(t => `• \"${t.title}\" by ${t.artist}`).join("\n")}`
-        : "";
+    /* ----------------------------------------------
+     * 1) 사전 필터링
+     *    - era, genre, region 는 항상 매칭
+     *    - artist 는 "사용자가 지정했을 때만" 매칭 (case‑insensitive)
+     * ---------------------------------------------- */
+    const relevant = history.filter(trk => {
+        const eraOk = trk.era === era;
+        const regionOk = (trk.region || '').toLowerCase() === region.toLowerCase();
+        const genreOk = (trk.genre || '').toLowerCase().includes(genre.toLowerCase()) ||
+            genre.toLowerCase().includes((trk.genre || '').toLowerCase());
+        const artistOk = !userArtistNorm || (trk.artist || '').toLowerCase() === userArtistNorm;
+        return eraOk && regionOk && genreOk && artistOk;
+    });
 
-    const systemPrompt = `
-You are Echo, an AI DJ who creates radio broadcasts based on user input.
+    /* ----------------------------------------------
+     * 2) 제목 + 아티스트 기준 중복 제거 (case-insensitive)
+     * ---------------------------------------------- */
+    const dedupLatestFirst = [];
+    const seen = new Set();
+    for (let i = relevant.length - 1; i >= 0; i--) {
+        const t = relevant[i];
+        const key = `${(t.title || '').toLowerCase()}::${(t.artist || '').toLowerCase()}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            dedupLatestFirst.push(t);
+        }
+    }
+    const allFiltered = dedupLatestFirst.reverse(); // 최신→과거 순으로 전체 사용
 
-User preferences:
-• era: ${era}
-• genre: ${genre}
-• region: ${region}
-• user_artist: ${user_artist || 'none'}
-• language: ${language}
-• talk_ratio: ${talk_ratio}
-• track_count: ${track_count}
-${user_artist ? "" : "• IMPORTANT: Do not repeat artists across the playlist."}
+    const historyPrompt = allFiltered.length
+        ? `Avoid repeating these ${allFiltered.length} tracks already used in previous broadcasts:\n${allFiltered.map(t => `• \"${t.title}\" by ${t.artist}`).join('\n')}`
+        : '';
 
-${historyPrompt}
-
-Instructions:
-1. Select music matching the user's preferences.
-2. Return **exactly ${track_count} tracks**.
-3. For each track, include:
-   - title
-   - artist
-   - youtube_id
-   - narration
-4. The amount of DJ narration must reflect the talk_ratio:
-   - 0.0 → no narration at all
-   - 0.5 → brief 14–16 sentence intro per song
-   - 1.0 → full commentary with story, lyrics, and background
-5. The entire narration and content must be written in the language specified.
-   - en-US → American English
-   - ko-KR → Korean
-   - ja-JP → Japanese
-6. Output only valid JSON like this:
-{
-  "artist_intro": { "narration": "..." },
-  "tracks": [
-    { "title": "...", "artist": "...", "youtube_id": "...", "narration": "..." }
-  ],
-  "closing": "..."
-}
-NO markdown. No extra text. Return only valid JSON.
-7. If **user_artist is 'none'**, every track **must be by a different artist**.
-8. artist_intro.narration MUST be a detailed DJ monologue
-`;
-    console.log("📣 생성된 GPT 프롬프트:\n", systemPrompt);
+    /* ----------------------------------------------
+     * 3) GPT system prompt
+     * ---------------------------------------------- */
+    const systemPrompt = `You are Echo, an AI DJ who creates radio broadcasts based on user input.\n\nUser preferences:\n• era: ${era}\n• genre: ${genre}\n• region: ${region}\n• user_artist: ${user_artist || 'none'}\n• language: ${language}\n• talk_ratio: ${talk_ratio}\n• track_count: ${track_count}\n${userArtistNorm ? '' : '• IMPORTANT: Do not repeat artists across the playlist.'}\n\n${historyPrompt}\n\nInstructions:\n1. Select music matching the user's preferences.\n2. Return exactly ${track_count} tracks.\n3. For each track, include:\n   - title\n   - artist\n   - youtube_id\n   - narration\n4. The amount of DJ narration must reflect the talk_ratio:\n   - 0.0 → no narration at all\n   - 0.5 → brief 14–16 sentence intro per song\n   - 1.0 → full commentary with story, lyrics, and background\n5. The entire narration and content must be written in the language specified.\n   - en-US → American English\n   - ko-KR → Korean\n   - ja-JP → Japanese\n6. Output only valid JSON like this:\n{\n  \"artist_intro\": { \"narration\": \"...\" },\n  \"tracks\": [\n    { \"title\": \"...\", \"artist\": \"...\", \"youtube_id\": \"...\", \"narration\": \"...\" }\n  ],\n  \"closing\": \"...\"\n}\nNO markdown. No extra text. Return only valid JSON.\n7. If user_artist is 'none', every track must be by a different artist.\n8. artist_intro.narration MUST be a detailed DJ monologue`;
+    console.log('📣 생성된 GPT 프롬프트:\n', systemPrompt);
 
     try {
         const MAX_RETRIES = 3;
@@ -106,7 +101,8 @@ NO markdown. No extra text. Return only valid JSON.
                 json = JSON.parse(raw);
             } catch (err) {
                 console.error('🔥 JSON 파싱 실패:', err.message);
-                retries++; continue;
+                retries++;
+                continue;
             }
 
             validTracks = [];
@@ -141,7 +137,6 @@ NO markdown. No extra text. Return only valid JSON.
             retries++;
         }
         res.status(502).json({ error: '유효한 트랙을 충분히 찾지 못했습니다.' });
-
     } catch (err) {
         console.error('🚨 서버 오류:', err);
         res.status(500).json({ error: '서버 내부 오류' });
