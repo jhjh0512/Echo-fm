@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { X } from "lucide-react";
 
 /* --------------------------------------------------
- *  HistoryExplorer – Card style with thumbnails
+ *  HistoryExplorer – grid view (no virtualisation)
  * -------------------------------------------------- */
 
 interface Track {
@@ -64,6 +64,8 @@ export default function HistoryExplorer() {
      * ------------------------------ */
     const results = useMemo(() => {
         let list = [...raw];
+
+        // text search
         if (textQuery.trim()) {
             const q = textQuery.trim().toLowerCase();
             list = list.filter(t =>
@@ -72,11 +74,18 @@ export default function HistoryExplorer() {
                 (t.narration || "").toLowerCase().includes(q)
             );
         }
-        if (filterEra) list = list.filter(t => t.era === filterEra);
-        if (filterGenre) list = list.filter(t => t.genre === filterGenre);
-        if (filterRegion) list = list.filter(t => t.region === filterRegion);
 
-        list.sort((a, b) => (sortNewestFirst ? 1 : -1)); // localStorage order is chronological
+        // filters (case‑insensitive)
+        if (filterEra)
+            list = list.filter(t => (t.era || "").toLowerCase() === filterEra.toLowerCase());
+        if (filterGenre)
+            list = list.filter(t => (t.genre || "").toLowerCase().includes(filterGenre.toLowerCase()));
+        if (filterRegion)
+            list = list.filter(t => (t.region || "").toLowerCase().includes(filterRegion.toLowerCase()));
+
+        // sort (localStorage 저장 순서는 오래된 → 새로운 순으로 가정)
+        if (sortNewestFirst) list = list.reverse();
+
         return list;
     }, [raw, textQuery, filterEra, filterGenre, filterRegion, sortNewestFirst]);
 
@@ -123,6 +132,7 @@ export default function HistoryExplorer() {
                     className="px-3 py-2 rounded-lg bg-slate-900 text-gray-100"
                     value={filterEra}
                     onChange={e => setFilterEra(e.target.value)}
+                    aria-label="Filter by era"
                 >
                     <option value="">Era (all)</option>
                     {eras.map(e => <option key={e} value={e}>{e}</option>)}
@@ -132,6 +142,7 @@ export default function HistoryExplorer() {
                     className="px-3 py-2 rounded-lg bg-slate-900 text-gray-100"
                     value={filterGenre}
                     onChange={e => setFilterGenre(e.target.value)}
+                    aria-label="Filter by genre"
                 >
                     <option value="">Genre (all)</option>
                     {genres.map(g => <option key={g} value={g}>{g}</option>)}
@@ -141,6 +152,7 @@ export default function HistoryExplorer() {
                     className="px-3 py-2 rounded-lg bg-slate-900 text-gray-100"
                     value={filterRegion}
                     onChange={e => setFilterRegion(e.target.value)}
+                    aria-label="Filter by region"
                 >
                     <option value="">Region (all)</option>
                     {regions.map(r => <option key={r} value={r}>{r}</option>)}
