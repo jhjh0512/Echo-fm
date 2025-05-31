@@ -1,71 +1,121 @@
-/// <reference types="youtube" />
+// src/components/Player.tsx
 
-import React, { useEffect, useRef, useState } from "react";
-import YouTube from "react-youtube";
-import type { YouTubeProps } from "react-youtube";
+import { useRef, useState, useEffect } from "react";
+import YouTube, { type YouTubeEvent } from "react-youtube";
 import { speak } from "../utils/tts";
 
-type Track = { title: string; artist: string; youtube_id: string; narration: string };
+export interface Track {
+    title: string;
+    artist: string;
+    youtube_id: string;
+    narration?: string;
+}
 
-type PlayerProps = {
+export interface PlayerProps {
     tracks: Track[];
     voice: string;
     introDone: boolean;
-};
+    language: string;
+}
 
-export default function Player({ tracks, voice, introDone }: PlayerProps) {
+export default function Player({
+    tracks,
+    voice,
+    introDone,
+    language,
+}: PlayerProps) {
     const [idx, setIdx] = useState(0);
-    const [ready, setReady] = useState(false);          // ⭐ 준비 여부
-    const playerRef = useRef<YT.Player | null>(null);
-    const lastKey = useRef<string>("");
+    const current = tracks[idx];
 
-    /* ① 인덱스·voice 바뀔 때: 준비돼 있을 때만 나레이션 → play */
-    useEffect(() => {
-        if (!introDone || !ready) return;                 // 준비 안 됐으면 skip
-        const t = tracks[idx];
-        if (!t?.narration) return;
+    const playerRef = useRef<any>(null);
+    const utterRef = useRef<{ promise: Promise<void>; cancel: () => void } | null>(
+        null
+    );
 
-        const key = `${idx}-${voice}`;
-        if (lastKey.current === key) return;              // Strict 모드 중복 방지
-        lastKey.current = key;
-
-        // 1) 영상은 이미 onReady에서 pauseVideo() 해둠
-        // 2) 나레이션
-        speak(t.narration, voice).then(() => {
-            playerRef.current?.playVideo?.();               // 3) 끝나면 재생
-        });
-    }, [idx, voice, introDone, ready, tracks]);
-
-    /* ② 트랙 끝 → 다음 인덱스 */
-    const onEnd: YouTubeProps["onEnd"] = () =>
-        setIdx(prev => (prev + 1) % tracks.length);
-
-    /* ③ 영상 준비되면: ref 지정 + pause + ready=true */
-    const onReady: YouTubeProps["onReady"] = e => {
-        playerRef.current = e.target;
-        e.target.pauseVideo();      // 첫 로드 시 자동재생 방지
-        setReady(true);             // ⭐ 준비 완료 플래그
+    // 현재 재생 중인 TTS 취소
+    const stopNarration = () => {
+        utterRef.current?.cancel();
+        utterRef.current = null;
     };
 
-    const opts: YouTubeProps["opts"] = { playerVars: { autoplay: 0 } };
-    const track = tracks[idx];
+    // 다음/이전 트랙 이동
+    const nextTrack = () => {
+        stopNarration();
+        playerRef.current?.stopVideo();
+        setIdx((i) => (i + 1) % tracks.length);
+    };
+    const prevTrack = () => {
+        stopNarration();
+        playerRef.current?.stopVideo();
+        setIdx((i) => (i - 1 + tracks.length) % tracks.length);
+    };
 
-    if (!track) return <div style={{ padding: 24 }}>⏳ Loading…</div>;
+    // 내레이션이 끝나면 영상 재생
+    useEffect(() => {
+        if (!introDone || !current?.narration) return;
+
+        stopNarration();
+        const utter = speak(current.narration, voice, language);
+        utterRef.current = utter;
+
+        utter.promise
+            .then(() => playerRef.current?.playVideo())
+            .catch((err) => console.error("[Player] TTS error", err));
+    }, [idx, introDone, voice, language, current]);
+
+    // 언마운트 시 내레이션 정리
+    useEffect(() => () => stopNarration(), []);
+
+    if (!tracks.length) return null;
 
     return (
-        <div>
-            <h3>🎵 {track.title} — {track.artist}</h3>
+        <>
+            {/* 1) 영상 영역 (16:9 비율) */}
+            <div className="w-full aspect-video relative">
+                <YouTube
+                    key={current.youtube_id}
+                    videoId={current.youtube_id}
+                    opts={{
+                        width: "100%",
+                        height: "100%",
+                        playerVars: { autoplay: 0, rel: 0, enablejsapi: 1 },
+                    }}
+                    onReady={(e) => (playerRef.current = e.target)}
+                    onStateChange={(e: YouTubeEvent<number>) => {
+                        if (e.data === 0) nextTrack(); // 영상 끝나면 다음 트랙
+                    }}
+                    className="absolute inset-0 w-full h-full"
+                />
+            </div>
 
-            <YouTube
-                videoId={track.youtube_id}
-                opts={opts}
-                onReady={onReady}
-                onEnd={onEnd}
-            />
+            {/* 2) 영상 아래: 내레이션 텍스트 */}
+            {current.narration && (
+                <blockquote className="mt-4 bg-slate-800 rounded-xl p-4 text-sm text-slate-200 border-l-4 border-blue-500">
+                    {current.narration}
+                </blockquote>
+            )}
 
-            <button onClick={() => setIdx(prev => (prev + 1) % tracks.length)}>
-                ▶️ Skip
-            </button>
-        </div>
+            {/* 3) 영상 아래: Prev / Stop / Next 버튼 */}
+            <div className="mt-2 flex gap-2">
+                <button
+                    onClick={prevTrack}
+                    className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+                >
+                    ⏮️ Prev
+                </button>
+                <button
+                    onClick={stopNarration}
+                    className="px-3 py-1 rounded bg-red-600 hover:bg-red-500"
+                >
+                    ⏹️ Stop Narration
+                </button>
+                <button
+                    onClick={nextTrack}
+                    className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+                >
+                    ⏭️ Next
+                </button>
+            </div>
+        </>
     );
 }
