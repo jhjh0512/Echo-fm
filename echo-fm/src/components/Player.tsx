@@ -16,6 +16,7 @@ export interface PlayerProps {
     voice: string;
     introDone: boolean;
     language: string;
+    onReSearch: (idx: number) => void;
 }
 
 export default function Player({
@@ -23,6 +24,7 @@ export default function Player({
     voice,
     introDone,
     language,
+    onReSearch,
 }: PlayerProps) {
     const [idx, setIdx] = useState(0);
     const current = tracks[idx];
@@ -114,6 +116,12 @@ export default function Player({
                     className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
                 >
                     ⏭️ Next
+                </button>
+                +        <button
+                    onClick={() => onReSearch(idx)}
+                    className="px-3 py-1 rounded bg-yellow-600 hover:bg-yellow-500"
+                >
+                    🔄 Re-Search
                 </button>
             </div>
         </>

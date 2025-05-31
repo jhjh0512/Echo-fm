@@ -110,6 +110,8 @@ export default function App() {
   const [introText, setIntroText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const SEARCH_VIDEO_ENDPOINT = "http://localhost:3001/search-video";
+
 
   /* ---------------- generate ---------------- */
   const handleGenerate = async () => {
@@ -168,6 +170,53 @@ export default function App() {
       setLoading(false);
     }
   };
+
+  /**
+ * 잘못된 유튜브 ID가 나왔을 때,
+ * 해당 트랙(index)에 대해 다시 검색하고 새로운 youtube_id로 교체하는 함수
+ */
+  const handleReSearchVideo = async (trackIndex: number) => {
+    if (!response) return;
+    const track = response.tracks[trackIndex];
+
+    try {
+      // 1) 백엔드 /search-video 호출
+      const res = await fetch(SEARCH_VIDEO_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: track.title,
+          artist: track.artist,
+        }),
+      });
+      const json = await res.json();
+      const newId = json.youtube_id;
+      if (!newId) return;
+
+      // 2) response state 내 tracks 업데이트
+      const updatedTracks = [...response.tracks];
+      updatedTracks[trackIndex] = {
+        ...updatedTracks[trackIndex],
+        youtube_id: newId,
+      };
+      setResponse({ ...response, tracks: updatedTracks });
+
+      // 3) localStorage 히스토리에도 youtube_id 교체
+      const historyList = getStoredHistory();
+      const newHistory = historyList.map((hist) => {
+        // title+artist만 비교
+        if (hist.title === track.title && hist.artist === track.artist) {
+          return { ...hist, youtube_id: newId };
+        }
+        return hist;
+      });
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory));
+    } catch (err) {
+      console.error("🔄 Re-search video error:", err);
+    }
+  };
+
+
 
   /* ---------------- UI ---------------- */
   return (
@@ -236,10 +285,11 @@ export default function App() {
 
           {response && (
             <Player
-              tracks={response?.tracks || []}
+              tracks={response.tracks || []}
               voice={voice}
               introDone={introDone}
               language={language}
+              onReSearch={(idx) => handleReSearchVideo(idx)}
             />
           )}
         </div>

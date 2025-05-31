@@ -85,6 +85,56 @@ app.post("/summaries", async (req, res) => {
 });
 
 /* --------------------------------------------------
+ *  /search-video – 잘못된 YouTube ID 재탐색용 엔드포인트
+ *  입력: { title: string, artist: string }
+ *  반환: { youtube_id: string }
+ * -------------------------------------------------- */
+app.post("/search-video", async (req, res) => {
+    try {
+        const { title, artist } = req.body || {};
+        if (!title || !artist) {
+            return res.status(400).json({ error: "title과 artist를 모두 제공해야 합니다." });
+        }
+
+        // 1) 우선 GPT 등으로 fallback 탐색 시도
+        //    (youtube.js 내부에 이미 구현된 로직을 재활용)
+        let newId = null;
+
+        // a) findAlternativeYouTubeId 시도
+        newId = await findAlternativeYouTubeId(title, artist);
+        if (newId) {
+            const ok = await isYouTubeVideoValid(newId);
+            if (!ok) {
+                newId = null; // 유효하지 않으면 무시
+            }
+        }
+
+        // b) 아직 못 찾았다면 fallbackYoutubeIdFromGPT 시도
+        if (!newId) {
+            newId = await fallbackYoutubeIdFromGPT(title, artist);
+            if (newId) {
+                const ok = await isYouTubeVideoValid(newId);
+                if (!ok) {
+                    newId = null;
+                }
+            }
+        }
+
+        // c) 그래도 못 찾았다면 404
+        if (!newId) {
+            return res.status(404).json({ error: "해당 트랙에 대한 유효한 YouTube ID를 찾지 못했습니다." });
+        }
+
+        // 성공적으로 찾았으면 반환
+        return res.json({ youtube_id: newId });
+    } catch (err) {
+        console.error("/search-video 오류", err);
+        return res.status(500).json({ error: "search-video 내 서버 오류" });
+    }
+});
+
+
+/* --------------------------------------------------
  *  /generate – main broadcast endpoint (원본 나레이션 유지)
  * -------------------------------------------------- */
 app.post("/generate", async (req, res) => {
